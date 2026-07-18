@@ -260,3 +260,30 @@ test("a message removed during hydration does not regain stale parts", async () 
     app.renderer.destroy()
   }
 })
+
+test("completed assistant refreshes the modified files sidebar", async () => {
+  await using tmp = await tmpdir()
+  await Bun.write(`${tmp.path}/kv.json`, "{}")
+
+  let diffRequests = 0
+  const { app, emit, sync } = await mount((url) => {
+    if (url.pathname === `/session/${sessionID}`) return json(session)
+    if (url.pathname === `/session/${sessionID}/message`) return json([])
+    if (url.pathname === `/session/${sessionID}/todo`) return json([])
+    if (url.pathname === `/session/${sessionID}/diff`) {
+      diffRequests++
+      return json(diffRequests === 1 ? [] : [{ file: "changed.ts", additions: 1, deletions: 0 }])
+    }
+    return undefined
+  }, tmp.path)
+
+  try {
+    await sync.session.sync(sessionID)
+    emit(global({ id: "evt_completed", type: "message.updated", properties: { sessionID, info: assistant } }))
+    await wait(() => sync.data.session_diff[sessionID]?.[0]?.file === "changed.ts")
+
+    expect(diffRequests).toBe(2)
+  } finally {
+    app.renderer.destroy()
+  }
+})

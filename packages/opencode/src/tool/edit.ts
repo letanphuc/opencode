@@ -18,6 +18,7 @@ import { Snapshot } from "@/snapshot"
 import { assertExternalDirectoryEffect } from "./external-directory"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import * as Bom from "@/util/bom"
+import { SessionFileChange } from "@/session/file-change"
 
 function normalizeLineEndings(text: string): string {
   return text.replaceAll("\r\n", "\n")
@@ -85,10 +86,12 @@ export const EditTool = Tool.define(
           let diff = ""
           let contentOld = ""
           let contentNew = ""
+          let existed = false
+          let bom = false
           yield* lock(filePath).withPermits(1)(
             Effect.gen(function* () {
               if (params.oldString === "") {
-                const existed = yield* afs.existsSafe(filePath)
+                existed = yield* afs.existsSafe(filePath)
                 if (existed) {
                   throw new Error(
                     "oldString cannot be empty when editing an existing file. Provide the exact text to replace, or use write for an intentional full-file replacement.",
@@ -123,7 +126,9 @@ export const EditTool = Tool.define(
               const info = yield* afs.stat(filePath).pipe(Effect.catch(() => Effect.succeed(undefined)))
               if (!info) throw new Error(`File ${filePath} not found`)
               if (info.type === "Directory") throw new Error(`Path is a directory, not a file: ${filePath}`)
-              const source = yield* Bom.readFile(afs, filePath)
+               const source = yield* Bom.readFile(afs, filePath)
+               existed = true
+               bom = source.bom
               contentOld = source.text
 
               const ending = detectLineEnding(contentOld)
@@ -190,6 +195,7 @@ export const EditTool = Tool.define(
               diff,
               filediff,
               diagnostics: {},
+              [SessionFileChange.metadataKey]: [{ file: filePath, existed, content: contentOld, bom }],
             },
           })
 
@@ -205,6 +211,7 @@ export const EditTool = Tool.define(
               diagnostics,
               diff,
               filediff,
+              [SessionFileChange.metadataKey]: [{ file: filePath, existed, content: contentOld, bom }],
             },
             title: `${path.relative(instance.worktree, filePath)}`,
             output,
